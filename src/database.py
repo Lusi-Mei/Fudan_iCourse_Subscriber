@@ -109,3 +109,14 @@ class Database:
                 "UPDATE lectures SET emailed_at = ? WHERE sub_id = ?",
                 (datetime.now().isoformat(), sub_id),
             )
+
+    def mark_emailed_batch(self, sub_ids: list[str]):
+        """Mark multiple lectures as emailed in a single transaction."""
+        if not sub_ids:
+            return
+        now = datetime.now().isoformat()
+        with self.conn:
+            self.conn.executemany(
+                "UPDATE lectures SET emailed_at = ? WHERE sub_id = ?",
+                [(now, sid) for sid in sub_ids],
+            )

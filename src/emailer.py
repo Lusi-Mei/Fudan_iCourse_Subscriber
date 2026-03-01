@@ -17,7 +17,7 @@ def _md_to_html(md_text: str) -> str:
 
         return markdown.markdown(md_text, extensions=["tables", "fenced_code"])
     except ImportError:
-        return f"<pre>{md_text}</pre>"
+        return f"<pre>{escape(md_text)}</pre>"
 
 
 class Emailer:
@@ -43,10 +43,7 @@ class Emailer:
         # Group by course (preserve insertion order)
         courses: OrderedDict[str, list[dict]] = OrderedDict()
         for item in items:
-            ct = item["course_title"]
-            if ct not in courses:
-                courses[ct] = []
-            courses[ct].append(item)
+            courses.setdefault(item["course_title"], []).append(item)
 
         # Subject: [iCourse] 数据结构 (3), 操作系统 (2)
         parts = [f"{ct} ({len(lecs)})" for ct, lecs in courses.items()]

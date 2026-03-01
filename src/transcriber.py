@@ -49,6 +49,18 @@ class Transcriber:
         self._vad = sherpa_onnx.VoiceActivityDetector(vad_config, buffer_size_in_seconds=120)
         print("[Transcriber] Model loaded.")
 
+    def _drain_segments(self, texts: list[str]):
+        """Recognize and collect all complete speech segments from VAD."""
+        while not self._vad.empty():
+            segment = self._vad.front.samples
+            self._vad.pop()
+            stream = self._recognizer.create_stream()
+            stream.accept_waveform(16000, segment)
+            self._recognizer.decode_stream(stream)
+            text = stream.result.text.strip()
+            if text:
+                texts.append(text)
+
     def transcribe_video(self, video_path: str) -> str:
         """Transcribe a video file directly via ffmpeg pipe.
 
@@ -97,17 +109,7 @@ class Transcriber:
                 idx += window_size
 
                 # Process any complete speech segments
-                while not self._vad.empty():
-                    segment = self._vad.front.samples
-                    self._vad.pop()
-
-                    stream = self._recognizer.create_stream()
-                    stream.accept_waveform(sample_rate, segment)
-                    self._recognizer.decode_stream(stream)
-
-                    text = stream.result.text.strip()
-                    if text:
-                        texts.append(text)
+                self._drain_segments(texts)
 
             # Handle remaining samples (less than window_size)
             if idx < len(samples):
@@ -115,15 +117,7 @@ class Transcriber:
 
         # Flush VAD
         self._vad.flush()
-        while not self._vad.empty():
-            segment = self._vad.front.samples
-            self._vad.pop()
-            stream = self._recognizer.create_stream()
-            stream.accept_waveform(sample_rate, segment)
-            self._recognizer.decode_stream(stream)
-            text = stream.result.text.strip()
-            if text:
-                texts.append(text)
+        self._drain_segments(texts)
 
         proc.wait()
         if proc.returncode != 0:

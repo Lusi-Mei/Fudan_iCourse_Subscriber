@@ -18,10 +18,10 @@ SQLite 记录已处理课次（幂等，失败自动重试）
 
 | 组件 | 技术 |
 |------|------|
-| 认证 | WebVPN AES-128-CFB + IDP CAS (RSA) |
+| 认证 | 逆向的复旦WebVPN AES-128-CFB + IDP CAS (RSA) |
 | 语音转文字 | ffmpeg pipe + sherpa-onnx + SenseVoice-Small (int8) |
 | 语音分段 | silero VAD |
-| LLM 摘要 | ModelScope API (Qwen2.5-72B-Instruct) |
+| LLM 摘要 | ModelScope API (GLM-5) |
 | 邮件 | QQ SMTP SSL (465) |
 | 存储 | SQLite，AES-256-CBC 加密缓存 |
 | 调度 | GitHub Actions cron |

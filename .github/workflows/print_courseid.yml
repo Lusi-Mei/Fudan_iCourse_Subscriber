@@ -1,0 +1,16 @@
+name: Print Course IDs
+
+on:
+  workflow_dispatch: # 允许在 GitHub Actions 页面手动触发此工作流
+
+jobs:
+  print_env_job:
+    runs-on: ubuntu-latest
+    env:
+      # 假设你将 COURSE_IDS 配置在了 GitHub Repository Variables 中。
+      # 如果它是敏感信息，请改用 ${{ secrets.COURSE_IDS }}
+      COURSE_IDS: ${{ vars.COURSE_IDS }}
+    steps:
+      - name: Print the COURSE_IDS environment variable
+        run: |
+          echo "The COURSE_IDS is: $COURSE_IDS"

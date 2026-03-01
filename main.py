@@ -97,16 +97,8 @@ def login_with_retry(max_attempts: int = 5) -> WebVPNSession:
 
 def _check_session(client: ICourseClient) -> ICourseClient:
     """Verify WebVPN session; re-login if expired. Returns (possibly new) client."""
-    try:
-        resp = client.vpn.get(
-            f"{config.ICOURSE_BASE}/userapi/v1/infosimple", timeout=10
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("code") in (0, 200):
-                return client
-    except Exception:
-        pass
+    if client.check_alive():
+        return client
     print("[Session] WebVPN session expired, re-logging in...")
     vpn = login_with_retry()
     return ICourseClient(vpn)
@@ -204,8 +196,7 @@ def run():
         try:
             print(f"\n[Email] Sending summary for {len(email_items)} lecture(s)...")
             emailer.send(email_items)
-            for item in email_items:
-                db.mark_emailed(item["sub_id"])
+            db.mark_emailed_batch([item["sub_id"] for item in email_items])
         except Exception:
             print("[Email] Failed to send:")
             traceback.print_exc()

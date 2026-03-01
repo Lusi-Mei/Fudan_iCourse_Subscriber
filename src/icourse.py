@@ -42,6 +42,16 @@ class ICourseClient:
         self._userinfo = data.get("params") or data.get("data", {})
         return self._userinfo
 
+    def check_alive(self) -> bool:
+        """Quick session health check (non-cached)."""
+        try:
+            resp = self.vpn.get(
+                f"{self.base_url}/userapi/v1/infosimple", timeout=10
+            )
+            return resp.status_code == 200 and resp.json().get("code") in (0, 200)
+        except Exception:
+            return False
+
     def sign_video_url(
         self, video_url: str, now: int | None = None
     ) -> str:
@@ -291,13 +301,6 @@ class ICourseClient:
             return None
 
         return self.sign_video_url(base_url, now=now)
-
-    def get_video_page(self, course_id: str, sub_id: str) -> str | None:
-        """Get the MP4 video URL for a lecture (legacy name).
-
-        Delegates to get_video_url which uses the API directly.
-        """
-        return self.get_video_url(course_id, sub_id)
 
     def download_video(
         self,
