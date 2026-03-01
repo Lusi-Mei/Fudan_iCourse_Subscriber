@@ -1,7 +1,8 @@
 __pycache__/
 *.pyc
 .env
-data/
+data/*
+!data/icourse.db.enc
 *.mp4
 *.wav
 tests/

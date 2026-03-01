@@ -22,12 +22,14 @@ def process_lecture(
     db: Database,
     transcriber: Transcriber,
     summarizer: Summarizer,
-    emailer: Emailer | None,
     course_id: str,
     course_title: str,
     lecture: dict,
-):
-    """Download, transcribe, summarize, and email a single lecture."""
+) -> str | None:
+    """Download, transcribe, and summarize a single lecture.
+
+    Returns the summary string, or None if no summary was produced.
+    """
     sub_id = str(lecture["sub_id"])
     sub_title = lecture.get("sub_title", sub_id)
     date = lecture.get("date", "")
@@ -38,7 +40,7 @@ def process_lecture(
     video_url = client.get_video_url(course_id, sub_id)
     if not video_url:
         print(f"    No video URL for {sub_id}, skipping.")
-        return
+        return None
 
     video_dir = os.path.join(config.VIDEO_DIR, course_id)
     video_path = os.path.join(video_dir, f"{sub_id}.mp4")
@@ -62,20 +64,15 @@ def process_lecture(
     if not transcript.strip():
         print(f"    Empty transcript, skipping summary.")
         db.mark_processed(sub_id)
-        return
+        return None
 
     print(f"    Generating summary...")
     summary = summarizer.summarize(course_title, transcript)
     db.update_summary(sub_id, summary)
 
-    # 5) Email
-    if emailer:
-        print(f"    Sending email...")
-        emailer.send(course_title, sub_title, date, summary)
-        db.mark_emailed(sub_id)
-
     db.mark_processed(sub_id)
     print(f"    Done: {sub_title}")
+    return summary
 
 
 def login_with_retry(max_attempts: int = 5) -> WebVPNSession:
@@ -96,6 +93,21 @@ def login_with_retry(max_attempts: int = 5) -> WebVPNSession:
                 raise
 
 
+def _check_session(client: ICourseClient) -> ICourseClient:
+    """Verify WebVPN session; re-login if expired. Returns (possibly new) client."""
+    try:
+        resp = client.vpn.get(
+            f"{config.ICOURSE_BASE}/userapi/v1/infosimple", timeout=10
+        )
+        if resp.status_code == 200:
+            return client
+    except Exception:
+        pass
+    print("[Session] WebVPN session expired, re-logging in...")
+    vpn = login_with_retry()
+    return ICourseClient(vpn)
+
+
 def run():
     """Single execution of the full pipeline."""
     print("=" * 60)
@@ -113,12 +125,14 @@ def run():
 
     vpn = login_with_retry()
     client = ICourseClient(vpn)
+    email_items = []
 
     for course_id in config.COURSE_IDS:
         try:
             print(f"\n{'─' * 50}")
             print(f"[Course] {course_id}")
 
+            client = _check_session(client)
             detail = client.get_course_detail(course_id)
             course_title = detail["title"]
             teacher = detail["teacher"]
@@ -159,17 +173,37 @@ def run():
                     lecture.get("sub_title", ""),
                     lecture.get("date", ""),
                 )
+                client = _check_session(client)
                 try:
-                    process_lecture(
-                        client, db, transcriber, summarizer, emailer,
+                    summary = process_lecture(
+                        client, db, transcriber, summarizer,
                         course_id, course_title, lecture,
                     )
+                    if summary:
+                        email_items.append({
+                            "sub_id": sub_id,
+                            "course_title": course_title,
+                            "sub_title": lecture.get("sub_title", sub_id),
+                            "date": lecture.get("date", ""),
+                            "summary": summary,
+                        })
                 except Exception:
                     print(f"    ERROR processing {sub_id}:")
                     traceback.print_exc()
 
         except Exception:
             print(f"  ERROR processing course {course_id}:")
+            traceback.print_exc()
+
+    # Send one email with all summaries
+    if emailer and email_items:
+        try:
+            print(f"\n[Email] Sending summary for {len(email_items)} lecture(s)...")
+            emailer.send(email_items)
+            for item in email_items:
+                db.mark_emailed(item["sub_id"])
+        except Exception:
+            print("[Email] Failed to send:")
             traceback.print_exc()
 
     print(f"\n{'=' * 60}")

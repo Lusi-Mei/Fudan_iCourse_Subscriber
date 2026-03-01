@@ -1,6 +1,7 @@
 """Email notification via QQ SMTP."""
 
 import smtplib
+from collections import OrderedDict
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -27,30 +28,53 @@ class Emailer:
         self.password = config.SMTP_PASSWORD
         self.receiver = config.RECEIVER_EMAIL
 
-    def send(
-        self,
-        course_title: str,
-        sub_title: str,
-        date: str,
-        summary: str,
-    ):
-        """Send an email with the lecture summary.
+    def send(self, items: list[dict]):
+        """Send a single email containing all lecture summaries.
 
         Args:
-            course_title: Name of the course.
-            sub_title: Lecture title.
-            date: Lecture date string.
-            summary: Markdown-formatted summary.
+            items: List of dicts, each with keys:
+                   course_title, sub_title, date, summary
         """
-        subject = f"[iCourse] {course_title} - {sub_title} ({date})"
+        if not items:
+            return
 
-        plain = f"课程：{course_title}\n课次：{sub_title}\n日期：{date}\n\n{summary}"
-        html_body = _md_to_html(summary)
-        html = (
-            f"<h2>{course_title}</h2>"
-            f"<p><b>课次：</b>{sub_title} &nbsp; <b>日期：</b>{date}</p>"
-            f"<hr>{html_body}"
-        )
+        # Group by course (preserve insertion order)
+        courses: OrderedDict[str, list[dict]] = OrderedDict()
+        for item in items:
+            ct = item["course_title"]
+            if ct not in courses:
+                courses[ct] = []
+            courses[ct].append(item)
+
+        # Subject: [iCourse] 数据结构 (3), 操作系统 (2)
+        parts = [f"{ct} ({len(lecs)})" for ct, lecs in courses.items()]
+        subject = f"[iCourse 课程内容更新] {', '.join(parts)}"
+
+        # Plain text
+        plain_sections = []
+        for course_title, lectures in courses.items():
+            plain_sections.append(f"{'=' * 40}")
+            plain_sections.append(f"课程：{course_title}")
+            plain_sections.append(f"{'=' * 40}")
+            for lec in lectures:
+                plain_sections.append(
+                    f"\n--- {lec['sub_title']} ({lec['date']}) ---\n"
+                )
+                plain_sections.append(lec["summary"])
+        plain = "\n".join(plain_sections)
+
+        # HTML
+        html_sections = []
+        for course_title, lectures in courses.items():
+            html_sections.append(f"<h2>{course_title}</h2>")
+            for lec in lectures:
+                html_sections.append(
+                    f"<h3>{lec['sub_title']} "
+                    f"<small>({lec['date']})</small></h3>"
+                )
+                html_sections.append(_md_to_html(lec["summary"]))
+                html_sections.append("<hr>")
+        html = "\n".join(html_sections)
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject

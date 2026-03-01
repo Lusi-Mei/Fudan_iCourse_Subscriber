@@ -6,6 +6,9 @@ on:
     - cron: "0 14 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -53,23 +56,29 @@ jobs:
           rm sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2
           wget -q https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
 
-      # Restore encrypted database from cache
-      - name: Restore database
-        uses: actions/cache/restore@v4
-        with:
-          path: data/icourse.db.enc
-          key: icourse-db
-          restore-keys: icourse-db
-
+      # Decrypt database from repo (handles fork: different secrets = decrypt fails = start fresh)
       - name: Decrypt database
         if: hashFiles('data/icourse.db.enc') != ''
         env:
           DB_KEY: ${{ secrets.STUID }}${{ secrets.UISPSW }}${{ secrets.DASHSCOPE_API_KEY }}${{ secrets.SMTP_PASSWORD }}
         run: |
-          openssl enc -aes-256-cbc -d -pbkdf2 \
+          if openssl enc -aes-256-cbc -d -pbkdf2 \
             -in data/icourse.db.enc -out data/icourse.db \
-            -pass env:DB_KEY
-          rm data/icourse.db.enc
+            -pass env:DB_KEY 2>/dev/null; then
+            echo "Database decrypted successfully."
+          else
+            echo "::warning::Decryption failed (new fork or changed secrets). Starting with fresh database."
+            rm -f data/icourse.db
+          fi
+
+      - name: Record database state
+        id: db-before
+        run: |
+          if [ -f data/icourse.db ]; then
+            echo "hash=$(md5sum data/icourse.db | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          else
+            echo "hash=none" >> $GITHUB_OUTPUT
+          fi
 
       - name: Run
         env:
@@ -82,19 +91,29 @@ jobs:
           RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
         run: python main.py
 
-      # Encrypt and save database
-      - name: Encrypt database
-        if: always() && hashFiles('data/icourse.db') != ''
+      # Encrypt and commit database only if it changed
+      - name: Commit database
+        if: always()
         env:
           DB_KEY: ${{ secrets.STUID }}${{ secrets.UISPSW }}${{ secrets.DASHSCOPE_API_KEY }}${{ secrets.SMTP_PASSWORD }}
         run: |
+          if [ ! -f data/icourse.db ]; then
+            echo "No database file, skipping."
+            exit 0
+          fi
+
+          AFTER=$(md5sum data/icourse.db | cut -d' ' -f1)
+          if [ "$AFTER" = "${{ steps.db-before.outputs.hash }}" ]; then
+            echo "Database unchanged, skipping commit."
+            exit 0
+          fi
+
           openssl enc -aes-256-cbc -salt -pbkdf2 \
             -in data/icourse.db -out data/icourse.db.enc \
             -pass env:DB_KEY
 
-      - name: Save database
-        uses: actions/cache/save@v4
-        if: always() && hashFiles('data/icourse.db.enc') != ''
-        with:
-          path: data/icourse.db.enc
-          key: icourse-db-${{ github.run_id }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/icourse.db.enc
+          git commit -m "chore: update encrypted database"
+          git push
