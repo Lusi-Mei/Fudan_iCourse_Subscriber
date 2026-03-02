@@ -24,8 +24,8 @@ DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
 LLM_BASE_URL = "https://api-inference.modelscope.cn/v1/"
 LLM_MODELS = [
     "ZhipuAI/GLM-5",
-    "MiniMax/MiniMax-M2.5",
     "deepseek-ai/DeepSeek-V3.2",
+    "MiniMax/MiniMax-M2.5",
     "ZhipuAI/GLM-4.7",
     "deepseek-ai/DeepSeek-V3-0324",
     "Qwen/Qwen3.5-397B-A17B",
