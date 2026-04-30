@@ -24,28 +24,47 @@ USER_AGENT = (
 # 兼容性：只设置 DASHSCOPE_API_KEY 也能跑（modelscope 项的 api_key 直接读取它）。
 MODEL_PROVIDERS: list[dict] = [
     {
+        "name": "modelscope",
+        "api_key_env": "DASHSCOPE_API_KEY",
+        "base_url_env": "DASHSCOPE_BASE_URL",
+        "default_base_url": "https://api-inference.modelscope.cn/v1/",
+        "models": [
+            "deepseek-ai/DeepSeek-V4-Pro",
+            "deepseek-ai/DeepSeek-V4-Flash"
+        ],
+    },
+    {
+        "name": "deepseek",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "base_url_env": "DEEPSEEK_BASE_URL",
+        "default_base_url": "https://api.deepseek.com",
+        "models": [
+            "deepseek-v4-pro",
+            "deepseek-v4-flash"
+        ],
+    },
+    {
         "name": "gemini",
         "api_key_env": "GEMINI_API_KEY",
         "base_url_env": "GEMINI_BASE_URL",
         "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "models": [
             "gemini-2.5-flash",
-            "gemini-3-flash-preview",
+            "gemini-3-flash-preview"
         ],
     },
-    {
+        {
         "name": "modelscope",
         "api_key_env": "DASHSCOPE_API_KEY",
         "base_url_env": "DASHSCOPE_BASE_URL",
         "default_base_url": "https://api-inference.modelscope.cn/v1/",
         "models": [
-            "ZhipuAI/GLM-5",
             "deepseek-ai/DeepSeek-V3.2",
+            "ZhipuAI/GLM-5",
             "MiniMax/MiniMax-M2.5",
-            "Qwen/Qwen3.5-397B-A17B",
-            "ZhipuAI/GLM-4.7",
-        ],
-    },
+            "Qwen/Qwen3.5-397B-A17B"
+        ]
+    }
 ]
 
 
