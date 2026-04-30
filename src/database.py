@@ -160,13 +160,33 @@ class Database:
 
     def update_ppt_page(self, sub_id: str, page_num: int,
                         text: str | None, status: str):
-        """Mark a page's OCR result. status: 'done' | 'failed'."""
+        """Mark a page's OCR result.
+
+        ``status`` is free-form (no CHECK constraint); the pipeline uses
+        'done' | 'failed' | 'dedup_dropped' | 'invalid'. ``get_done_ppt_pages``
+        only surfaces 'done', so dropped/invalid pages naturally vanish from
+        the prompt.
+        """
         with self.conn:
             self.conn.execute(
                 """UPDATE ppt_pages
                    SET text = ?, ocr_status = ?, ocr_at = ?
                    WHERE sub_id = ? AND page_num = ?""",
                 (text, status, datetime.now().isoformat(), sub_id, page_num),
+            )
+
+    def update_ppt_page_dhash(self, sub_id: str, page_num: int,
+                              dhash: str | None):
+        """Record the perceptual hash of a page; status is left untouched.
+
+        Called between download and OCR so the dedup pass has dhashes for
+        every successfully-downloaded page in one place. ``dhash`` may be
+        None when image decode fails (treated as 'no dedup signal').
+        """
+        with self.conn:
+            self.conn.execute(
+                "UPDATE ppt_pages SET dhash = ? WHERE sub_id = ? AND page_num = ?",
+                (dhash, sub_id, page_num),
             )
 
     def insert_ppt_pages_pending(self, sub_id: str, items: list[dict]) -> int:
@@ -195,7 +215,7 @@ class Database:
     def get_pending_ppt_pages(self, sub_id: str) -> list[dict]:
         """Pages still awaiting OCR. Workers claim via update_ppt_page."""
         rows = self.conn.execute(
-            """SELECT page_num, created_sec, pptimgurl
+            """SELECT page_num, created_sec, pptimgurl, dhash
                FROM ppt_pages
                WHERE sub_id = ? AND ocr_status = 'pending'
                ORDER BY created_sec""",
@@ -258,6 +278,30 @@ class Database:
                JOIN courses c ON l.course_id = c.course_id
                WHERE l.summary IS NOT NULL
                  AND COALESCE(l.summary_format_version, 0) = 0"""
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_lectures_to_resummarize_for_courses(
+        self, course_ids: list[str],
+    ) -> list[dict]:
+        """Same as get_lectures_to_resummarize but scoped to course_ids.
+
+        The unscoped version walked every old lecture in the DB, which
+        meant every workflow run paid the cost of re-OCR'ing courses the
+        user wasn't even asking about.  Scoping limits the upgrade pass
+        to the courses the current run targets.
+        """
+        if not course_ids:
+            return []
+        placeholders = ",".join("?" * len(course_ids))
+        rows = self.conn.execute(
+            f"""SELECT l.*, c.title AS course_title, c.teacher
+               FROM lectures l
+               JOIN courses c ON l.course_id = c.course_id
+               WHERE l.summary IS NOT NULL
+                 AND COALESCE(l.summary_format_version, 0) = 0
+                 AND l.course_id IN ({placeholders})""",
+            list(course_ids),
         ).fetchall()
         return [dict(row) for row in rows]
 

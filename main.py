@@ -12,7 +12,7 @@ from src.database import Database
 from src.emailer import Emailer
 from src.icourse import ICourseClient
 from src.ocr import ocr_image_text
-from src.ppt_dedup import filter_pages
+from src.ppt_dedup import compute_dhash, dedup_dhash, is_invalid_page
 from src.ppt_fetcher import fetch_ppt_image
 from src.summarizer import Summarizer
 from src.transcriber import IncompleteAudioError, NoAudioStreamError, Transcriber
@@ -22,18 +22,23 @@ from src.webvpn import WebVPNSession
 def _fetch_and_ocr_ppts(
     client: ICourseClient, db: Database, course_id: str, sub_id: str,
 ) -> None:
-    """Make sure every PPT page for this lecture has reached a final OCR status.
+    """Drive every PPT page for this lecture to a final ocr_status.
 
-    Steps:
+    Four stages, each idempotent so an interrupted run resumes cleanly:
       1. Fetch the latest PPT page list from iCourse and INSERT OR IGNORE
-         each into ppt_pages with status='pending'. Repeated calls are safe;
-         only previously-unknown pages are added.
-      2. For every still-pending row, download the image and OCR it. Each
-         page commits to DB independently so the work is resumable across
-         interrupted runs and concurrent workers (SQLite WAL row-level locks).
+         each into ppt_pages with status='pending'. Repeated calls are safe.
+      2. For every still-pending page: download image bytes + compute
+         perceptual dhash and store it. Status stays 'pending' so the same
+         row can be re-attempted on the next run if we crash here.
+      3. Sliding-window dHash dedup over the chronologically-ordered
+         pending pages. Losers are stamped 'dedup_dropped' and skipped
+         from the OCR loop below.
+      4. OCR each survivor; if the recovered text matches one of the
+         INVALID_PAGE_PATTERNS (classroom desktop, e-learning portal),
+         mark 'invalid'; otherwise 'done' with the text.
 
-    Failures (network, OCR engine) flip the row to 'failed' and continue;
-    bucketer queries only 'done' rows so 'failed' pages simply drop out.
+    'done' is the only status get_done_ppt_pages returns, so dropped /
+    invalid / failed pages naturally vanish from the LLM prompt.
     """
     try:
         ppt_items = client.get_ppt_list(course_id, sub_id)
@@ -52,8 +57,12 @@ def _fetch_and_ocr_ppts(
     if not pending:
         return
 
-    print(f"    OCR: {len(pending)} pending page(s)...")
-    done_count = 0
+    print(f"    PPT pipeline: {len(pending)} pending page(s)...")
+
+    # Stage 2: download + dHash. We hold images in memory between the dedup
+    # and OCR stages so we don't re-download survivors. Failed downloads
+    # are immediately stamped 'failed' and never reach OCR.
+    image_cache: dict[int, bytes] = {}
     failed_count = 0
     for p in pending:
         page_num = p["page_num"]
@@ -62,35 +71,46 @@ def _fetch_and_ocr_ppts(
             db.update_ppt_page(sub_id, page_num, None, "failed")
             failed_count += 1
             continue
+        image_cache[page_num] = img
+        db.update_ppt_page_dhash(sub_id, page_num, compute_dhash(img))
+
+    # Stage 3: dedup. Re-read so each row has its freshly-written dhash.
+    pending_with_dhash = [
+        p for p in db.get_pending_ppt_pages(sub_id)
+        if p["page_num"] in image_cache
+    ]
+    dhashes = [p.get("dhash") for p in pending_with_dhash]
+    dropped_idx = dedup_dhash(dhashes)
+    dropped_pages = {pending_with_dhash[i]["page_num"] for i in dropped_idx}
+    for page_num in dropped_pages:
+        db.update_ppt_page(sub_id, page_num, None, "dedup_dropped")
+        image_cache.pop(page_num, None)
+
+    # Stage 4: OCR survivors + classify invalid screens.
+    done_count = 0
+    invalid_count = 0
+    for p in pending_with_dhash:
+        page_num = p["page_num"]
+        if page_num not in image_cache:
+            continue
         try:
-            text = ocr_image_text(img)
+            text = ocr_image_text(image_cache[page_num])
         except Exception as e:
             print(f"      page {page_num}: OCR error {type(e).__name__}: {e}")
             db.update_ppt_page(sub_id, page_num, None, "failed")
             failed_count += 1
             continue
-        db.update_ppt_page(sub_id, page_num, text, "done")
-        done_count += 1
-    print(f"    OCR done: {done_count} ok, {failed_count} failed")
+        if is_invalid_page(text):
+            db.update_ppt_page(sub_id, page_num, text, "invalid")
+            invalid_count += 1
+        else:
+            db.update_ppt_page(sub_id, page_num, text, "done")
+            done_count += 1
 
-
-def _build_filtered_pages(db: Database, sub_id: str) -> list[dict]:
-    """Read all done OCR pages for sub_id, drop classroom-desktop / dup pages.
-
-    Filtering is done in-memory every prompt build so the DB stays a faithful
-    record of what the OCR step produced; removed pages can resurface if the
-    rules change later.
-    """
-    all_done = db.get_done_ppt_pages(sub_id)
-    if not all_done:
-        return []
-    kept, stats = filter_pages(all_done)
-    if stats["desktop_dropped"] or stats["jaccard_dropped"]:
-        print(
-            f"    Filter: -{stats['desktop_dropped']} desktop,"
-            f" -{stats['jaccard_dropped']} dup → {len(kept)} pages kept"
-        )
-    return kept
+    print(
+        f"    PPT pipeline: {done_count} done, {len(dropped_pages)} dedup'd, "
+        f"{invalid_count} invalid, {failed_count} failed"
+    )
 
 
 def process_lecture(
@@ -208,7 +228,7 @@ def process_lecture(
         summary = existing["summary"]
     else:
         try:
-            kept_pages = _build_filtered_pages(db, sub_id)
+            kept_pages = db.get_done_ppt_pages(sub_id)
             prompt_text, mode = bucketer.assemble(
                 transcript, transcript_segments, kept_pages,
             )
@@ -236,6 +256,7 @@ def _resummarize_old_lectures(
     db: Database,
     summarizer: Summarizer,
     email_items: list,
+    course_ids: list[str],
 ):
     """Upgrade pre-v2 summaries to PPT-aware v2 format (flat-mode prompt).
 
@@ -248,8 +269,12 @@ def _resummarize_old_lectures(
 
     Each upgraded lecture is appended to email_items with is_update=True so
     Emailer adds the （含 PPT 识别·更新）subject suffix and a 更新 badge.
+
+    Scoped to ``course_ids``: only lectures whose course_id appears in the
+    current run's COURSE_IDS list are upgraded, so we don't pay re-OCR cost
+    for courses the user isn't actively monitoring this run.
     """
-    targets = db.get_lectures_to_resummarize()
+    targets = db.get_lectures_to_resummarize_for_courses(course_ids)
     if not targets:
         return
     print(f"\n[Resummarize] {len(targets)} lecture(s) eligible for v2 upgrade.")
@@ -274,7 +299,7 @@ def _resummarize_old_lectures(
                 print(f"    Empty transcript, cannot resummarize.")
                 continue
 
-            kept_pages = _build_filtered_pages(db, sub_id)
+            kept_pages = db.get_done_ppt_pages(sub_id)
             prompt_text, mode = bucketer.assemble(transcript, None, kept_pages)
             print(
                 f"    Prompt: mode={mode}, {len(prompt_text)} chars,"
@@ -442,7 +467,9 @@ def run():
     # sees the new content in the same digest.
     try:
         _check_session(client)
-        _resummarize_old_lectures(client, db, summarizer, email_items)
+        _resummarize_old_lectures(
+            client, db, summarizer, email_items, config.COURSE_IDS,
+        )
     except Exception:
         print("[Resummarize] phase errored:")
         traceback.print_exc()
