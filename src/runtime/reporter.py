@@ -18,6 +18,17 @@ import threading
 import time
 
 
+def _resource_meter() -> str:
+    """Return a short CPU + memory suffix for progress lines."""
+    try:
+        import psutil
+        cpu = psutil.cpu_percent()
+        mem = psutil.virtual_memory().percent
+        return f"  (cpu={cpu:.0f}% mem={mem:.0f}%)"
+    except Exception:
+        return ""
+
+
 class Reporter:
     """Single sink for orchestration logs.
 
@@ -154,8 +165,9 @@ class Reporter:
             elapsed = max(time.time() - st["t0"], 0.001)
             rate = done / elapsed
             bar = self._bar(done, total)
+            _rm = _resource_meter()
             print(f"    [Images {sub_id}] {bar} {done}/{total} "
-                  f"({rate:.1f} pic/s)", flush=True)
+                  f"({rate:.1f} pic/s){_rm}", flush=True)
             if is_final:
                 self._image_progress_state.pop(sub_id, None)
 
@@ -207,8 +219,9 @@ class Reporter:
             elapsed = max(time.time() - st["t0"], 0.001)
             rate = done / elapsed
             bar = self._bar(done, total)
+            _rm = _resource_meter()
             print(f"    [OCR {sub_id}] {bar} {done}/{total} "
-                  f"({rate:.2f} page/s)", flush=True)
+                  f"({rate:.2f} page/s){_rm}", flush=True)
             if is_final:
                 self._ocr_progress_state.pop(sub_id, None)
 

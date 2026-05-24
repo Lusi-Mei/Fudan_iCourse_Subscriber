@@ -38,6 +38,15 @@ BYTES_PER_SECOND = SAMPLE_RATE * BYTES_PER_SAMPLE
 SILENCE_GAP_THRESHOLD_SEC = 30 * 60  # 30 min of no speech → suspected cutoff
 
 
+def _resource_meter() -> str:
+    """Short CPU + memory suffix for progress lines."""
+    try:
+        import psutil
+        return f"  (cpu={psutil.cpu_percent():.0f}% mem={psutil.virtual_memory().percent:.0f}%)"
+    except Exception:
+        return ""
+
+
 # ── Generic per-segment text post-processing ─────────────────────────────
 # Applied to every recognized segment regardless of backend.  The cleanups
 # below address noise that the LLM otherwise has to spend tokens ignoring:
@@ -335,7 +344,7 @@ class Transcriber:
                     f"[Transcriber] Progress: {audio_pos:.0f}s audio,"
                     f" {total_bytes / 1024 / 1024:.1f} MB consumed,"
                     f" {speed_kbps:.1f} KB/s,"
-                    f" {len(segments)} segments so far",
+                    f" {len(segments)} segments so far{_resource_meter()}",
                     flush=True,
                 )
                 last_report = now
