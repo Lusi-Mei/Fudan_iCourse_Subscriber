@@ -55,11 +55,17 @@ def dedup_dhash(
 ) -> list[int]:
     """Sliding-window perceptual dedup. Returns sorted list of dropped indices.
 
-    For each surviving anchor i, compare its dhash against the next
-    ``window`` items; if Hamming distance ≤ threshold, mark the *later*
-    index as dropped. Already-dropped images never become anchors —
-    that prevents a chain of "near to last-kept" pages from cascading
-    drops onto pages that aren't actually near the kept anchor.
+    For each surviving anchor i, scan forward collecting at most
+    ``window`` *non-dropped* items to compare against.  When the scan
+    finds a match the matched index is dropped and the window
+    automatically "fills forward" (the dropped slot is replaced by the
+    next non-dropped item beyond the current window boundary).  This
+    makes the dedup more aggressive than a fixed-position window since
+    dropped items don't reduce the number of actual comparisons.
+
+    Already-dropped images never become anchors — that prevents a chain
+    of "near to last-kept" pages from cascading drops onto pages that
+    aren't actually near the kept anchor.
 
     ``items`` may contain ``None`` (compute_dhash failure) — those
     indices are passed through (never dropped, never used as anchor).
@@ -72,14 +78,28 @@ def dedup_dhash(
         a = items[i]
         if a is None:
             continue
-        for j in range(i + 1, min(i + 1 + window, n)):
+        # Scan forward, collecting at most ``window`` non-dropped
+        # comparison targets.  If some are dropped mid-scan (matched
+        # by this anchor), the loop continues past the original
+        # window boundary to fill the queue.
+        cmp_count = 0
+        j = i + 1
+        while cmp_count < window and j < n:
             if j in dropped:
+                j += 1
                 continue
             b = items[j]
             if b is None:
+                j += 1
                 continue
             if _hamming_hex(a, b) <= threshold:
                 dropped.add(j)
+                # j is dropped — do NOT increment cmp_count; the
+                # dropped slot is replaced by the next non-dropped
+                # item (queue fills forward).
+            else:
+                cmp_count += 1
+            j += 1
     return sorted(dropped)
 
 
