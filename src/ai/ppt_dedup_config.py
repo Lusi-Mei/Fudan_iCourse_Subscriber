@@ -76,6 +76,10 @@ INVALID_PAGE_PATTERNS: list[str] = [
     "正在配置windows",
     "请不要关闭计算机",
     "正在更新你的系统",
+    # ── Type 6: end-of-class desktop / slideshow-end screens ──
+    "正在关机",
+    "放映结束单击鼠标退出",
+    "要退出全屏请按",
 ]
 
 # ── Per-line noise stopwords (clean_ppt_text exact match) ───────────────────
