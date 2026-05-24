@@ -63,8 +63,7 @@ INVALID_PAGE_PATTERNS: list[str] = [
     "ppt演示者视图会影响录屏",
     # ── Type 3: Windows file explorer (full-screen) ──
     # Normalised breadcrumb: "此电脑>U盘(D:)>..." → "此电脑u盘"
-    "此电脑","改日期","全屏模式"
-    "此电脑本地磁盘",
+    "此电脑", "改日期", "全屏模式", "此电脑本地磁盘",
     # File-list column headers (normalised: "名称修改日期类型大小")
     "名称修改日期类型大小",
     # File picker title bar
@@ -202,6 +201,27 @@ PPT_UI_STOPWORDS: set[str] = {
     "所有工具",                              # SmallPDF "All Tools" sidebar
     "查找文本或工具Q",                       # SmallPDF search bar
     "电子签名",                              # SmallPDF e-signature
+    # ── Acrobat / PDF reader toolbar buttons ──
+    "转换",                                 # Convert
+    "签名",                                 # Sign
+    "压缩PDF",                              # Compress PDF
+    "保护PDF",                              # Protect PDF
+    "将PDF标记为密文",                      # Mark as Confidential
+    "准备表单",                             # Prepare Form
+    "扫描和OCR",                            # Scan & OCR
+    "主页工具",                             # Home Tool
+    "查看更多",                             # See more
+    "填写并签名",                           # Fill & Sign
+    "转换为PDF",                            # Convert to PDF
+    "编辑转换电子签名",                     # Fused toolbar labels
+    "转换电子签名",                         # Fused toolbar labels
+    "转换签名",                             # Fused toolbar labels
+    "子签名",                               # Sub-menu sign
+    "PowerPoint演示文稿",                   # PDF reader window title
+    # ── Browser/PDF menu bar (full line) ──
+    "文件（F）编辑（E）视图（V）签名（S）窗口（W）帮助（H）",
+    # ── Keyboard shortcut / UI artifacts from PDF readers ──
+    "AL", "LO", "[AL",
     # ── PowerPoint slide-sorter status ──
     "回", "□",
     # ── PowerPoint thumbnail sidebar ├──
@@ -221,6 +241,21 @@ PPT_UI_STOPWORDS: set[str] = {
     "效率工具", "默认字体",
     # ── WPS premium / features ──
     "会员专享", "WPSAI",
+    # ── WPS ribbon / toolbar labels ──
+    "分享",                              # Share button
+    "工具",                              # Tools tab
+    "校对",                              # Review > Proofreading
+    "智能美化",                          # WPS Smart Beautify
+    "放映",                              # Slide Show tab (WPS uses "放映" not "幻灯片放映")
+    "条件格式",                          # Conditional Formatting (spreadsheet in PPT context)
+    "表格样式",                          # Table Styles
+    "当页开始",                          # "从当前页开始" (Start from current) missing leading char
+    "版式",                              # Layout gallery
+    "新建幻灯片",                        # New Slide
+    "WWPSOffice",                        # WPS branding
+    "单击此处添加备注AI演讲稿",           # WPS AI speech draft placeholder
+    "三文件",                            # Fused OCR: hamburger icon + File tab
+    "分组",                              # Group button
     # ── Academic database / reader UI ──
     "文献解读", "文献评述",
     # ── Video player overlay ──
@@ -327,4 +362,12 @@ UI_NOISE_LINE_PATTERNS: list[str] = [
     r"^\d+文字方向$",
     # Font dropdown: "Arial(标题）" or "Calibri(正文）"
     r"^[A-Z][A-Za-z]+\s*[（(][^）)]{1,6}[）)]$",
+    # PDF filename in viewer title bar: "Reading pie charts.pdf"
+    r"^.+\.[pP][dD][fF]$",
+    # Standalone two-digit page numbers from PDF reader: "10", "21"
+    r"^\d{2}$",
+    # PowerPoint window title without .pptx: "PowerPoint演示文稿 - Adobe Acrobat Reader"
+    r"^PowerPoint演示文稿.*$",
+    # OCR variants of pptx: "ppbx-PowerPoint", "ppx-PowerPoint"
+    r"^.*[.·]?pp[bt8]x?[^-]*[-(（\s]*PowerPoint.*$",
 ]
