@@ -47,6 +47,7 @@ async function _initEmpty() {
   const SQL = await _ensureSqlJs();
   _db = new SQL.Database();
   _db.exec(_schemaSql());
+  _db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
 }
 
 function _exportDB() {

@@ -50,5 +50,9 @@ CREATE TABLE IF NOT EXISTS all_courses (
     last_seen_at TEXT,
     PRIMARY KEY (course_id, term)
 );
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 `,
 };
