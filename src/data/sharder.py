@@ -35,11 +35,18 @@ import tempfile
 from src.data import crypto_box
 from src.data.schema import SCHEMA_SQL as _SCHEMA_SQL
 
-SHARD_TARGET_BYTES = 3 * 1024 * 1024   # encrypted+gzipped target per shard
-COMPRESSION_RATIO_GUESS = 4  # gzip ratio for transcript+summary text (Chinese)
+SHARD_TARGET_BYTES = 3 * 1024 * 1024   # legacy (ignored, kept for API compat)
+COMPRESSION_RATIO_GUESS = 4           # legacy (ignored, kept for API compat)
 INDEX_FILENAME = "icourse-index.enc"
 SHARDS_DIR = "shards"
 INDEX_VERSION = 2
+
+# ── Stable shard assignment ───────────────────────────────────────────────────
+# Shards are grouped by course count, NOT by byte size, so shard boundaries
+# stay stable across runs: only the shard containing a changed course gets a
+# new blob SHA.  The frontend's content-addressed cache (keyed by blob SHA)
+# short-circuits every other shard, making typical updates <5MB on the wire.
+MAX_COURSES_PER_SHARD = 40
 
 
 def _course_uncompressed_size(conn: sqlite3.Connection, course_id: str) -> int:
@@ -63,36 +70,43 @@ def _course_uncompressed_size(conn: sqlite3.Connection, course_id: str) -> int:
 
 
 def _group_courses(
-    conn: sqlite3.Connection, target_compressed: int,
+    conn: sqlite3.Connection, target_compressed: int | None = None,
 ) -> list[list[str]]:
-    """Pack course_ids into shards, each below ~target_compressed bytes.
+    """Assign courses to shards by stable course_id hash.
 
-    First-fit on courses sorted by course_id (deterministic so shard names
-    stay stable when nothing changes). A course exceeding the threshold gets
-    its own shard rather than being split across multiple shards.
+    Each shard holds up to ``MAX_COURSES_PER_SHARD`` courses.  Courses are
+    assigned to shard ``int(course_id) % num_shards``, where ``num_shards`` is
+    determined by ``ceil(total_courses / MAX_COURSES_PER_SHARD)``.
+
+    This ensures that when no courses are added or removed, every course maps
+    to the **same** shard every run — a course's data can grow or shrink
+    without affecting which shard it lives in.
+
+    When ``num_shards`` stays constant (the common case): only the shard
+    containing a changed course gets a new blob SHA.  All other shards are
+    untouched and the frontend's IndexedDB cache hits them directly — **zero**
+    network traffic for unchanged courses.
+
+    When a new course forces ``num_shards`` to increment (rare): a one-time
+    reshuffle moves roughly half the courses in the previously-largest shard.
+    All other courses stay put.
     """
-    target_uncompressed = target_compressed * COMPRESSION_RATIO_GUESS
-    courses = [
+    course_ids = [
         r[0] for r in conn.execute(
             "SELECT course_id FROM courses ORDER BY course_id"
         ).fetchall()
     ]
-    if not courses:
-        return [[]]  # at least one (empty) shard so the index has content
+    if not course_ids:
+        return [[]]
 
-    groups: list[list[str]] = []
-    current: list[str] = []
-    current_size = 0
-    for course_id in courses:
-        size = _course_uncompressed_size(conn, course_id)
-        if current and current_size + size > target_uncompressed:
-            groups.append(current)
-            current = []
-            current_size = 0
-        current.append(course_id)
-        current_size += size
-    if current:
-        groups.append(current)
+    num_shards = max(1, (len(course_ids) + MAX_COURSES_PER_SHARD - 1)
+                     // MAX_COURSES_PER_SHARD)
+    groups: list[list[str]] = [[] for _ in range(num_shards)]
+    for cid in course_ids:
+        shard_idx = int(cid) % num_shards
+        groups[shard_idx].append(cid)
+    for g in groups:
+        g.sort()
     return groups
 
 
@@ -171,12 +185,16 @@ def shard_database(
     db_path: str,
     output_dir: str,
     password: str,
-    target_size: int = SHARD_TARGET_BYTES,
+    target_size: int = 0,
 ) -> dict:
     """Split db_path into encrypted shards under output_dir.
 
-    Writes the index to `output_dir/icourse-index.enc` (encrypted JSON) and
-    each shard to `output_dir/shards/shard-NNNN.db.gz.enc`. Returns the index
+    Groups courses into shards by stable course_id hash (see
+    ``MAX_COURSES_PER_SHARD`` and ``_group_courses``).  The old
+    size-based ``target_size`` parameter is ignored.
+
+    Writes the index to ``output_dir/icourse-index.enc`` (encrypted JSON) and
+    each shard to ``output_dir/shards/shard-NNNN.db.gz.enc``. Returns the index
     dict (already serialized to disk).
     """
     shards_dir = os.path.join(output_dir, SHARDS_DIR)
