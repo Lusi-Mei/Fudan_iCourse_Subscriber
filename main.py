@@ -14,6 +14,7 @@ AudioDownloader.  This file does only orchestration:
 Anything more interesting belongs in one of ``src/*`` modules.
 """
 
+import datetime
 import time
 import traceback
 
@@ -281,9 +282,12 @@ def run():
     client = ICourseClient(vpn)
     email_items: list = []
 
-    # Auto-discover and crawl every available semester.  The frontend
-    # subscription editor depends on a fresh all_courses table.
-    _crawl_semester_catalog(client, db, reporter)
+    # Refresh the semester catalog on a schedule (~2× per month) so the
+    # frontend subscription editor stays current without hammering the API.
+    if datetime.now().day % 14 == 0:
+        _crawl_semester_catalog(client, db, reporter)
+    else:
+        reporter.info("Skipping catalog crawl (day % 14 != 0).")
 
     if not config.COURSE_IDS:
         # Crawl-only mode: nothing to process, just persist + exit.
